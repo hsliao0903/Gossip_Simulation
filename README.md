@@ -1,6 +1,7 @@
 # Gossip Protocol Simulation
 
-This is a simulation project that simulates the Gossip Protocol and use this protocol to implement push-sum protocol. 
+This is a simulation project that simulates the Gossip Protocol and use this protocol to implement push-sum protocol.
+
 Also, it provides several different network topologies which plays a critical role in the dissemination of Gossip protocol.
 
 The paper about Gossip protocol and the use of push-sum protocol is listed below:
