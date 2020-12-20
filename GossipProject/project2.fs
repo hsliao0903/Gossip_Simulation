@@ -95,7 +95,7 @@ let boss =
         <| fun bossMailbox ->
             let mutable totalNumNodes = 0
             let mutable propogationCount = 0
-            let nodeSet = Set.empty  
+            let mutable nodeSet = Set.empty  
             let stopWatch = System.Diagnostics.Stopwatch()
 
             // implementing node fault rate
@@ -103,7 +103,7 @@ let boss =
             let mutable faultNodeSet = Set.empty
             let mutable faultNodeCount = 0
 
-            let rec bossLoop (nodeSet:Set<int>) =
+            let rec bossLoop () =
                 actor {
                     let! (msg: BossMessage) = bossMailbox.Receive()
                     match msg with
@@ -134,7 +134,7 @@ let boss =
                             Environment.Exit 1
 
                     | Enqueue msg ->
-                        let nodeSet = nodeSet.Add(msg)
+                        nodeSet <- nodeSet.Add(msg)
                         propogationCount <- propogationCount + 1
                         printf "."
 
@@ -148,10 +148,10 @@ let boss =
                             printfn "[BOSS] Time duration: %u" stopWatch.ElapsedMilliseconds
                             Environment.Exit 1
                             
-                        return! bossLoop nodeSet
+                        // return! bossLoop nodeSet
                     | Dequeue msg ->
-                        let nodeSet = nodeSet.Remove(msg)
-                        return! bossLoop nodeSet
+                        nodeSet <- nodeSet.Remove(msg)
+                        // return! bossLoop nodeSet
 
                     | QueueSender msg ->
 
@@ -199,7 +199,7 @@ let boss =
                             let nodename = i.ToString()
                             getNodeActorRefByName nodename <! Push [|i|>double; 1.0|]
 
-                        return! bossLoop nodeSet
+                        // return! bossLoop nodeSet
                     | PushQueueSender msg ->
 
                         // As time passed
@@ -231,11 +231,11 @@ let boss =
                             // let the node gossip if it is not died
                             if not (faultNodeSet.Contains(nodeIdx)) then
                                 getNodeActorRefByName nodename <! PushSender true
-                        return! bossLoop nodeSet
+                        // return! bossLoop nodeSet
 
-                    return! bossLoop nodeSet
+                    return! bossLoop ()
                 }
-            bossLoop nodeSet
+            bossLoop ()
 
 
 
@@ -250,28 +250,26 @@ let nodes initialCounter topology numNodes (nborSet:Set<string>) (nodeMailbox:Ac
     let mutable (w:double) = 0.0
     let mutable lastRatio:double = 10000.0
     let mutable terminationCounter = 0
-    
+    let mutable counter = 0
     
 
-    let rec loop counter (nborSet:Set<string>) = actor {
+    let rec loop  () = actor {
         let! (msg: NodeMessage) = nodeMailbox.Receive()
         match msg with
         | Rumor msg->
-            let maxCount = msg
-            if counter < maxCount && counter >= 0 then
-                if counter = 0 then
-                    // register as "active" node
-                    getActorRefByName "Boss" <! Enqueue nodeIdx
-                let newCounter = counter + 1
-                return! loop newCounter nborSet
-            else if counter = maxCount then
-                // unregister, not active now             
-                getActorRefByName "Boss" <! Dequeue nodeIdx
-                return! loop -1 nborSet
-            else if counter < 0 then
-                return! loop counter nborSet
-            else
-                printfn "\n[%s] Something wrong, counter: %d" nodeName counter
+            if counter >= 0 then
+                let maxCount = msg
+                if counter < maxCount && counter >= 0 then
+                    if counter = 0 then
+                        // register as "active" node
+                        getActorRefByName "Boss" <! Enqueue nodeIdx
+                    counter <- counter + 1
+                else if counter = maxCount then
+                    // unregister, not active now             
+                    getActorRefByName "Boss" <! Dequeue nodeIdx
+                    counter <- -1
+                else
+                    printfn "\n[%s] Something wrong, counter: %d" nodeName counter
 
         // send a rumor to a random neighbor
         | Sending msg ->
@@ -282,55 +280,66 @@ let nodes initialCounter topology numNodes (nborSet:Set<string>) (nodeMailbox:Ac
             let name = tmp.[rnd.Next(tmp.Length)]
             if counter > 0 && counter < maxCount then
                 getNodeActorRefByName name <! Rumor maxCount
-                
-            return! loop counter nborSet 
 
         // keep adding received s and w before sending new push next round
         | Push msg ->
-            if terminationCounter = consecutiveRounds then
-                return! loop counter nborSet
-            let rcvS = msg.[0]
-            let rcvW = msg.[1]
-            s <- s + rcvS
-            w <- w + rcvW
-            return! loop counter nborSet
+            if terminationCounter <> consecutiveRounds then
+
+                let rcvS = msg.[0]
+                let rcvW = msg.[1]
+                s <- s + rcvS
+                w <- w + rcvW
+                // return! loop counter nborSet
 
             
         | PushSender msg ->
-            if terminationCounter = consecutiveRounds then
-                return! loop counter nborSet
+            if terminationCounter <> consecutiveRounds then
 
-            let ratio = s / w
+                let ratio = s / w
 
-            // check if ratio is converged, consecutiveRounds here is really important to accuracy and time cost
-            //printfn "[%s] current ratio: %.10f" nodeName ratio
-            if (abs (ratio-lastRatio)) <= ratioDifference then
-                terminationCounter <- terminationCounter + 1
-                if terminationCounter = consecutiveRounds then
-                    getActorRefByName "Boss" <! EndPushSum [|ratio; s; w|]
-                    return! loop counter nborSet
-            else
-                terminationCounter <- 0
-            lastRatio <- ratio
+                // check if ratio is converged, consecutiveRounds here is really important to accuracy and time cost
+                //printfn "[%s] current ratio: %.10f" nodeName ratio
+                if (abs (ratio-lastRatio)) <= ratioDifference then
+                    terminationCounter <- terminationCounter + 1
+                    if terminationCounter = consecutiveRounds then
+                        getActorRefByName "Boss" <! EndPushSum [|ratio; s; w|]
+                        // return! loop counter nborSet
+                    else
+                        lastRatio <- ratio
 
-            // send 0.5s and 0.5w to a random neighbor
-            let rnd = Random()
-            let tmp = (nborSet |> Array.ofSeq)
-            let name = tmp.[rnd.Next(tmp.Length)]
-            getNodeActorRefByName name <! Push [|(0.5*s); (0.5*w)|]
+                        // send 0.5s and 0.5w to a random neighbor
+                        let rnd = Random()
+                        let tmp = (nborSet |> Array.ofSeq)
+                        let name = tmp.[rnd.Next(tmp.Length)]
+                        getNodeActorRefByName name <! Push [|(0.5*s); (0.5*w)|]
 
-            // send 0.5s and 0.5w to node itself also
-            nodeMailbox.Self.Tell (Push [|0.5*s; 0.5*w;|])
+                        // send 0.5s and 0.5w to node itself also
+                        nodeMailbox.Self.Tell (Push [|0.5*s; 0.5*w;|])
 
-            // reset s and w           
-            s <- 0.0
-            w <- 0.0
-            return! loop counter nborSet
+                        // reset s and w           
+                        s <- 0.0
+                        w <- 0.0
+                else
+                    terminationCounter <- 0
+                    lastRatio <- ratio
+
+                    // send 0.5s and 0.5w to a random neighbor
+                    let rnd = Random()
+                    let tmp = (nborSet |> Array.ofSeq)
+                    let name = tmp.[rnd.Next(tmp.Length)]
+                    getNodeActorRefByName name <! Push [|(0.5*s); (0.5*w)|]
+
+                    // send 0.5s and 0.5w to node itself also
+                    nodeMailbox.Self.Tell (Push [|0.5*s; 0.5*w;|])
+
+                    // reset s and w           
+                    s <- 0.0
+                    w <- 0.0
             
          
-        return! loop counter nborSet
+        return! loop ()
     }
-    loop initialCounter nborSet
+    loop ()
 
 // used to spawn nodes and build topology
 let nodeSpawn numNodes topology = 
